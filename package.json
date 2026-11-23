@@ -1,0 +1,12 @@
+{
+  "name": "multi-agent-erp-framework",
+  "version": "1.0.0",
+  "description": "Portable Multi-Agent Microkernel ERP Framework with SQLite per-slot schemas, Service Bus auto-mocks, Event Bus, and CI Boundary Guard",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "serve": "node src/server.mjs",
+    "test": "node --test",
+    "check:boundaries": "node scripts/check-boundaries.mjs"
+  }
+}

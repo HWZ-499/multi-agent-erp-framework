@@ -1,0 +1,2 @@
+-- Inventory slot table (assigned to Agent-Inventory)
+-- Table names must use the `inventory_` prefix.

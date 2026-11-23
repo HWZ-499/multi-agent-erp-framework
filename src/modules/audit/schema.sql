@@ -1,0 +1,2 @@
+-- Audit slot table (assigned to Agent-Audit)
+-- Table names must use the `audit_` prefix.

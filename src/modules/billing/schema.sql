@@ -1,0 +1,2 @@
+-- Billing slot table (assigned to OpenCode / Agent-OpenCode-Billing)
+-- Table names must use the `billing_` prefix.

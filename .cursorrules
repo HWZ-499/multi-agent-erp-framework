@@ -1,0 +1,6 @@
+# Cursor AI Rules
+Follow AGENTS.md and src/types/contracts.mjs strictly.
+1. Modify files ONLY inside your assigned src/modules/<slot>/ directory.
+2. NEVER import another module directly (no ../other-slot imports). Use ctx.services.<slot> and ctx.bus.
+3. Prefix all tables in src/modules/<slot>/schema.sql with <slot>_.
+4. Validate widgets with validateWidgetOutput(slotId, widget) and pass node scripts/check-boundaries.mjs + node --test.

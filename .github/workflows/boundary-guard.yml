@@ -1,0 +1,20 @@
+name: Boundary & Anti-Coupling Guard
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  guard-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check territory & cross-module import boundaries
+        run: node scripts/check-boundaries.mjs --base origin/${{ github.base_ref }}
+      - name: Run full test suite
+        run: node --test

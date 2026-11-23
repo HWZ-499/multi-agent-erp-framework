@@ -1,0 +1,2 @@
+-- Orders slot table (assigned to Codex / Agent-Codex-Orders)
+-- Table names must use the `orders_` prefix.
