@@ -183,6 +183,7 @@ test('supports frozen stub service responses independently of current module sta
   const order = await kernel.services.orders.createOrder(input());
   assert.equal(order.mockedInventory, true);
   assert.equal(order.mockedBilling, true);
+  assert.equal(order.status, 'PROVISIONAL_MOCK');
   assert.equal(order.totalAmount, 324);
   assert.equal((await kernel.services.orders.listOrders()).length, 1);
   assert.ok((await kernel.services.audit.listLogs()).some((log) => log.eventName === 'order.created'));

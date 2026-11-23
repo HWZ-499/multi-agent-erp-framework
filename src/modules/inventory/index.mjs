@@ -170,6 +170,53 @@ export const moduleDef = {
         availableQty,
       };
     },
+
+    releaseStock(ctx, input = {}) {
+      const params = input && typeof input === 'object' ? input : {};
+      const sku = validateSku(params.sku);
+      const qty = validatePositiveQty(params.qty);
+      const orderId = params.orderId ?? null;
+
+      const existing = findItemRowOrThrow(ctx.db, sku);
+      if (existing.reserved_qty < qty) {
+        const err = new Error(
+          `Cannot release ${qty} units of "${sku}": only ${existing.reserved_qty} reserved`
+        );
+        err.statusCode = 409;
+        throw err;
+      }
+
+      const info = ctx.db
+        .prepare(
+          'UPDATE inventory_items SET available_qty = available_qty + ?, reserved_qty = reserved_qty - ? WHERE sku = ? AND reserved_qty >= ?'
+        )
+        .run(qty, qty, sku, qty);
+
+      if (info.changes !== 1) {
+        throw new Error(`Failed to release stock for "${sku}"`);
+      }
+
+      const updated = findItemRowOrThrow(ctx.db, sku);
+      const availableQty = updated.available_qty;
+      const reservedQty = updated.reserved_qty;
+
+      ctx.bus.emit('inventory.released', {
+        sku,
+        qty,
+        availableQty,
+        reservedQty,
+        orderId,
+      });
+
+      return {
+        released: true,
+        sku,
+        qty,
+        availableQty,
+        reservedQty,
+        orderId,
+      };
+    },
   },
 
   routes: {

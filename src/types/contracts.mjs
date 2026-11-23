@@ -100,6 +100,16 @@ export const STUB_SERVICE_MOCKS = {
     restock(_ctx, { sku = 'SKU-LAPTOP', qty = 5 } = {}) {
       return { sku, availableQty: 50 + qty, _mock: true };
     },
+    releaseStock(_ctx, { sku = 'SKU-LAPTOP', qty = 1, orderId = 'ORD-MOCK' } = {}) {
+      return {
+        released: true,
+        sku,
+        qty,
+        remainingQty: 50,
+        orderId,
+        _mock: true,
+      };
+    },
   },
 
   billing: {

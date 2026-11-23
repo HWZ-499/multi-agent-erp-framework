@@ -71,31 +71,62 @@ export const moduleDef = {
         throw error;
       }
 
-      const reservation = await ctx.services.inventory.reserveStock({ sku, qty, orderId });
-      const subtotal = roundCurrency(reservation.unitPrice * qty);
-      const invoice = await ctx.services.billing.createInvoice({ orderId, customer, subtotal, taxRate });
-      const status = 'CONFIRMED';
       const createdAt = new Date().toISOString();
-
       ctx.db.prepare(`
         INSERT INTO orders_records (
           order_id, customer, sku, qty, unit_price, subtotal,
           tax_amount, total_amount, invoice_id, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(orderId, customer, sku, qty, reservation.unitPrice, subtotal,
-        invoice.taxAmount, invoice.totalAmount, invoice.invoiceId, status, createdAt);
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, '', 'PENDING', ?)
+      `).run(orderId, customer, sku, qty, createdAt);
 
-      ctx.bus.emit('order.created', {
-        orderId, customer, sku, qty, subtotal,
-        totalAmount: invoice.totalAmount, invoiceId: invoice.invoiceId,
-      });
+      let reservation = null;
+      try {
+        reservation = await ctx.services.inventory.reserveStock({ sku, qty, orderId });
+        const subtotal = roundCurrency(reservation.unitPrice * qty);
+        const invoice = await ctx.services.billing.createInvoice({ orderId, customer, subtotal, taxRate });
 
-      return {
-        orderId, customer, sku, qty, unitPrice: reservation.unitPrice, subtotal,
-        taxAmount: invoice.taxAmount, totalAmount: invoice.totalAmount,
-        invoiceId: invoice.invoiceId, status,
-        mockedInventory: Boolean(reservation._mock), mockedBilling: Boolean(invoice._mock),
-      };
+        const mockedInventory = Boolean(reservation._mock);
+        const mockedBilling = Boolean(invoice._mock);
+        const status = mockedInventory || mockedBilling ? 'PROVISIONAL_MOCK' : 'CONFIRMED';
+
+        ctx.db.prepare(`
+          UPDATE orders_records
+          SET unit_price = ?, subtotal = ?, tax_amount = ?, total_amount = ?,
+              invoice_id = ?, status = ?, created_at = ?
+          WHERE order_id = ?
+        `).run(
+          reservation.unitPrice,
+          subtotal,
+          invoice.taxAmount,
+          invoice.totalAmount,
+          invoice.invoiceId,
+          status,
+          createdAt,
+          orderId
+        );
+
+        ctx.bus.emit('order.created', {
+          orderId, customer, sku, qty, subtotal,
+          totalAmount: invoice.totalAmount, invoiceId: invoice.invoiceId,
+        });
+
+        return {
+          orderId, customer, sku, qty, unitPrice: reservation.unitPrice, subtotal,
+          taxAmount: invoice.taxAmount, totalAmount: invoice.totalAmount,
+          invoiceId: invoice.invoiceId, status,
+          mockedInventory, mockedBilling,
+        };
+      } catch (err) {
+        if (reservation) {
+          try {
+            await ctx.services.inventory.releaseStock({ sku, qty, orderId });
+          } catch {
+            // Preserve the originating failure while compensating reserved stock.
+          }
+        }
+        ctx.db.prepare("DELETE FROM orders_records WHERE order_id = ? AND status = 'PENDING'").run(orderId);
+        throw err;
+      }
     },
 
     listOrders(ctx) {
@@ -103,7 +134,9 @@ export const moduleDef = {
         SELECT order_id AS orderId, customer, sku, qty, unit_price AS unitPrice,
           subtotal, tax_amount AS taxAmount, total_amount AS totalAmount,
           invoice_id AS invoiceId, status, created_at AS createdAt
-        FROM orders_records ORDER BY created_at DESC, rowid DESC
+        FROM orders_records
+        WHERE status != 'PENDING'
+        ORDER BY created_at DESC, rowid DESC
       `).all().map((row) => ({ ...row }));
     },
   },

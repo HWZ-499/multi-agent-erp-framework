@@ -4,6 +4,7 @@
 
 const SUBSCRIBED_EVENTS = [
   'inventory.reserved',
+  'inventory.released',
   'inventory.restocked',
   'order.created',
   'invoice.created',

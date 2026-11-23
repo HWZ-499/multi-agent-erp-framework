@@ -249,3 +249,46 @@ test('renderWidget produces valid dark-theme widget output reflecting live stock
     kernel.close();
   }
 });
+
+test('releaseStock restores availableQty, decrements reservedQty, and emits inventory.released', async () => {
+  const kernel = await createKernel({ dbPath: ':memory:' });
+  const releasedEvents = [];
+  kernel.bus.on('inventory.released', (payload) => releasedEvents.push(payload));
+
+  try {
+    await kernel.services.inventory.reserveStock({
+      sku: 'SKU-MONITOR',
+      qty: 4,
+      orderId: 'ORD-REL-1',
+    });
+
+    const release = await kernel.services.inventory.releaseStock({
+      sku: 'SKU-MONITOR',
+      qty: 4,
+      orderId: 'ORD-REL-1',
+    });
+
+    assert.deepEqual(release, {
+      released: true,
+      sku: 'SKU-MONITOR',
+      qty: 4,
+      availableQty: 30,
+      reservedQty: 0,
+      orderId: 'ORD-REL-1',
+    });
+    assert.equal(releasedEvents.length, 1);
+    assert.equal(releasedEvents[0].orderId, 'ORD-REL-1');
+
+    await assert.rejects(
+      () =>
+        kernel.services.inventory.releaseStock({
+          sku: 'SKU-MONITOR',
+          qty: 1,
+          orderId: 'ORD-REL-1',
+        }),
+      /Cannot release/i
+    );
+  } finally {
+    kernel.close();
+  }
+});
