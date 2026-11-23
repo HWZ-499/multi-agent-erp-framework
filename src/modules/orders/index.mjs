@@ -1,4 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { roundCurrency } from '../../types/contracts.mjs';
+
+function requireText(value, field) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
 
 /**
  * SLOT 2: Order Orchestration Module (Assigned to OpenAI Codex)
@@ -41,11 +49,63 @@ import { roundCurrency } from '../../types/contracts.mjs';
 export const moduleDef = {
   id: 'orders',
   order: 20,
-  implemented: false,
+  implemented: true,
 
   init(_ctx) {},
-  services: {},
+  services: {
+    async createOrder(ctx, input = {}) {
+      const sku = requireText(input?.sku, 'sku');
+      const qty = input?.qty;
+      if (!Number.isInteger(qty) || qty <= 0) {
+        throw new Error('qty must be a positive integer');
+      }
+      const customer = requireText(input?.customer, 'customer');
+      const taxRate = typeof input?.taxRate === 'number'
+        && Number.isFinite(input.taxRate) && input.taxRate >= 0 ? input.taxRate : 0.08;
+      const orderId = input.orderId == null
+        ? `ORD-${randomUUID()}` : requireText(input.orderId, 'orderId');
+
+      if (ctx.db.prepare('SELECT 1 FROM orders_records WHERE order_id = ?').get(orderId)) {
+        const error = new Error(`Order "${orderId}" already exists`);
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const reservation = await ctx.services.inventory.reserveStock({ sku, qty, orderId });
+      const subtotal = roundCurrency(reservation.unitPrice * qty);
+      const invoice = await ctx.services.billing.createInvoice({ orderId, customer, subtotal, taxRate });
+      const status = 'CONFIRMED';
+      const createdAt = new Date().toISOString();
+
+      ctx.db.prepare(`
+        INSERT INTO orders_records (
+          order_id, customer, sku, qty, unit_price, subtotal,
+          tax_amount, total_amount, invoice_id, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(orderId, customer, sku, qty, reservation.unitPrice, subtotal,
+        invoice.taxAmount, invoice.totalAmount, invoice.invoiceId, status, createdAt);
+
+      ctx.bus.emit('order.created', {
+        orderId, customer, sku, qty, subtotal,
+        totalAmount: invoice.totalAmount, invoiceId: invoice.invoiceId,
+      });
+
+      return {
+        orderId, customer, sku, qty, unitPrice: reservation.unitPrice, subtotal,
+        taxAmount: invoice.taxAmount, totalAmount: invoice.totalAmount,
+        invoiceId: invoice.invoiceId, status,
+        mockedInventory: Boolean(reservation._mock), mockedBilling: Boolean(invoice._mock),
+      };
+    },
+
+    listOrders(ctx) {
+      return ctx.db.prepare(`
+        SELECT order_id AS orderId, customer, sku, qty, unit_price AS unitPrice,
+          subtotal, tax_amount AS taxAmount, total_amount AS totalAmount,
+          invoice_id AS invoiceId, status, created_at AS createdAt
+        FROM orders_records ORDER BY created_at DESC, rowid DESC
+      `).all().map((row) => ({ ...row }));
+    },
+  },
   routes: {},
 };
-
-void roundCurrency;
