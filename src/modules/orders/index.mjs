@@ -80,14 +80,21 @@ export const moduleDef = {
       `).run(orderId, customer, sku, qty, createdAt);
 
       let reservation = null;
+      let reservationReleased = false;
+      let invoice = null;
       try {
         reservation = await ctx.services.inventory.reserveStock({ sku, qty, orderId });
         const subtotal = roundCurrency(reservation.unitPrice * qty);
-        const invoice = await ctx.services.billing.createInvoice({ orderId, customer, subtotal, taxRate });
+        invoice = await ctx.services.billing.createInvoice({ orderId, customer, subtotal, taxRate });
 
         const mockedInventory = Boolean(reservation._mock);
         const mockedBilling = Boolean(invoice._mock);
         const status = mockedInventory || mockedBilling ? 'PROVISIONAL_MOCK' : 'CONFIRMED';
+
+        if ((mockedInventory || mockedBilling) && reservation && !reservation._mock) {
+          await ctx.services.inventory.releaseStock({ sku, qty, orderId });
+          reservationReleased = true;
+        }
 
         ctx.db.prepare(`
           UPDATE orders_records
@@ -117,14 +124,36 @@ export const moduleDef = {
           mockedInventory, mockedBilling,
         };
       } catch (err) {
-        if (reservation) {
+        const compensationErrors = [];
+
+        if (invoice && !invoice._mock) {
           try {
-            await ctx.services.inventory.releaseStock({ sku, qty, orderId });
-          } catch {
-            // Preserve the originating failure while compensating reserved stock.
+            await ctx.services.billing.voidInvoice({ invoiceId: invoice.invoiceId, orderId });
+          } catch (compErr) {
+            compensationErrors.push(compErr);
           }
         }
-        ctx.db.prepare("DELETE FROM orders_records WHERE order_id = ? AND status = 'PENDING'").run(orderId);
+
+        if (reservation && !reservation._mock && !reservationReleased) {
+          try {
+            await ctx.services.inventory.releaseStock({ sku, qty, orderId });
+          } catch (compErr) {
+            compensationErrors.push(compErr);
+          }
+        }
+
+        if (compensationErrors.length > 0) {
+          ctx.db
+            .prepare("UPDATE orders_records SET status = 'COMPENSATION_FAILED' WHERE order_id = ?")
+            .run(orderId);
+          const combined = new Error(
+            `${err.message}; compensation failed: ${compensationErrors.map((e) => e.message).join(', ')}`
+          );
+          combined.compensationErrors = compensationErrors;
+          throw combined;
+        }
+
+        ctx.db.prepare('DELETE FROM orders_records WHERE order_id = ?').run(orderId);
         throw err;
       }
     },
@@ -135,7 +164,7 @@ export const moduleDef = {
           subtotal, tax_amount AS taxAmount, total_amount AS totalAmount,
           invoice_id AS invoiceId, status, created_at AS createdAt
         FROM orders_records
-        WHERE status != 'PENDING'
+        WHERE status NOT IN ('PENDING', 'COMPENSATION_FAILED')
         ORDER BY created_at DESC, rowid DESC
       `).all().map((row) => ({ ...row }));
     },

@@ -8,6 +8,7 @@ const SUBSCRIBED_EVENTS = [
   'inventory.restocked',
   'order.created',
   'invoice.created',
+  'invoice.voided',
 ];
 
 function parsePayloadJson(rawJson) {

@@ -102,7 +102,21 @@ export const moduleDef = {
       const params = input && typeof input === 'object' ? input : {};
       const sku = validateSku(params.sku);
       const qty = validatePositiveQty(params.qty);
-      const orderId = params.orderId ?? null;
+      const orderId =
+        typeof params.orderId === 'string' && params.orderId.trim().length > 0
+          ? params.orderId.trim()
+          : null;
+
+      if (orderId) {
+        const existingRes = ctx.db
+          .prepare('SELECT status FROM inventory_reservations WHERE order_id = ?')
+          .get(orderId);
+        if (existingRes && existingRes.status === 'RESERVED') {
+          const err = new Error(`Reservation for order "${orderId}" already exists`);
+          err.statusCode = 409;
+          throw err;
+        }
+      }
 
       const existing = findItemRowOrThrow(ctx.db, sku);
       if (existing.available_qty < qty) {
@@ -121,6 +135,14 @@ export const moduleDef = {
 
       if (info.changes !== 1) {
         throw new Error(`Failed to reserve stock for "${sku}"`);
+      }
+
+      if (orderId) {
+        ctx.db
+          .prepare(
+            'INSERT OR REPLACE INTO inventory_reservations (order_id, sku, qty, status, created_at) VALUES (?, ?, ?, ?, ?)'
+          )
+          .run(orderId, sku, qty, 'RESERVED', new Date().toISOString());
       }
 
       const updated = findItemRowOrThrow(ctx.db, sku);
@@ -173,14 +195,56 @@ export const moduleDef = {
 
     releaseStock(ctx, input = {}) {
       const params = input && typeof input === 'object' ? input : {};
-      const sku = validateSku(params.sku);
-      const qty = validatePositiveQty(params.qty);
-      const orderId = params.orderId ?? null;
+      const orderId =
+        typeof params.orderId === 'string' && params.orderId.trim().length > 0
+          ? params.orderId.trim()
+          : null;
 
-      const existing = findItemRowOrThrow(ctx.db, sku);
-      if (existing.reserved_qty < qty) {
+      let targetSku;
+      let targetQty;
+
+      if (orderId) {
+        const resRow = ctx.db
+          .prepare('SELECT order_id, sku, qty, status FROM inventory_reservations WHERE order_id = ?')
+          .get(orderId);
+
+        if (!resRow) {
+          const err = new Error(`No reservation found for order "${orderId}"`);
+          err.statusCode = 404;
+          throw err;
+        }
+
+        if (resRow.status === 'RELEASED') {
+          const item = findItemRowOrThrow(ctx.db, resRow.sku);
+          return {
+            released: false,
+            alreadyReleased: true,
+            sku: resRow.sku,
+            qty: resRow.qty,
+            availableQty: item.available_qty,
+            reservedQty: item.reserved_qty,
+            orderId,
+          };
+        }
+
+        targetSku = resRow.sku;
+        targetQty = resRow.qty;
+
+        const markRes = ctx.db
+          .prepare("UPDATE inventory_reservations SET status = 'RELEASED' WHERE order_id = ? AND status = 'RESERVED'")
+          .run(orderId);
+        if (markRes.changes !== 1) {
+          throw new Error(`Failed to mark reservation "${orderId}" as released`);
+        }
+      } else {
+        targetSku = validateSku(params.sku);
+        targetQty = validatePositiveQty(params.qty);
+      }
+
+      const existing = findItemRowOrThrow(ctx.db, targetSku);
+      if (existing.reserved_qty < targetQty) {
         const err = new Error(
-          `Cannot release ${qty} units of "${sku}": only ${existing.reserved_qty} reserved`
+          `Cannot release ${targetQty} units of "${targetSku}": only ${existing.reserved_qty} reserved`
         );
         err.statusCode = 409;
         throw err;
@@ -190,19 +254,19 @@ export const moduleDef = {
         .prepare(
           'UPDATE inventory_items SET available_qty = available_qty + ?, reserved_qty = reserved_qty - ? WHERE sku = ? AND reserved_qty >= ?'
         )
-        .run(qty, qty, sku, qty);
+        .run(targetQty, targetQty, targetSku, targetQty);
 
       if (info.changes !== 1) {
-        throw new Error(`Failed to release stock for "${sku}"`);
+        throw new Error(`Failed to release stock for "${targetSku}"`);
       }
 
-      const updated = findItemRowOrThrow(ctx.db, sku);
+      const updated = findItemRowOrThrow(ctx.db, targetSku);
       const availableQty = updated.available_qty;
       const reservedQty = updated.reserved_qty;
 
       ctx.bus.emit('inventory.released', {
-        sku,
-        qty,
+        sku: targetSku,
+        qty: targetQty,
         availableQty,
         reservedQty,
         orderId,
@@ -210,8 +274,8 @@ export const moduleDef = {
 
       return {
         released: true,
-        sku,
-        qty,
+        sku: targetSku,
+        qty: targetQty,
         availableQty,
         reservedQty,
         orderId,

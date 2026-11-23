@@ -162,6 +162,59 @@ export const moduleDef = {
 
       return rows.map(mapInvoiceRow);
     },
+
+    /**
+     * Voids (removes) a persisted invoice during compensating Saga rollback
+     * and emits `invoice.voided`. Idempotent when already voided.
+     */
+    voidInvoice(ctx, input = {}) {
+      const params = input && typeof input === 'object' ? input : {};
+      const cleanInvoiceId =
+        typeof params.invoiceId === 'string' && params.invoiceId.trim().length > 0
+          ? params.invoiceId.trim()
+          : null;
+      const cleanOrderId =
+        typeof params.orderId === 'string' && params.orderId.trim().length > 0
+          ? params.orderId.trim()
+          : null;
+
+      if (!cleanInvoiceId && !cleanOrderId) {
+        throw new Error('Invalid voidInvoice request: invoiceId or orderId is required');
+      }
+
+      const row = cleanInvoiceId
+        ? ctx.db
+            .prepare('SELECT invoice_id, order_id FROM billing_invoices WHERE invoice_id = ?')
+            .get(cleanInvoiceId)
+        : ctx.db
+            .prepare('SELECT invoice_id, order_id FROM billing_invoices WHERE order_id = ?')
+            .get(cleanOrderId);
+
+      if (!row) {
+        return {
+          voided: false,
+          alreadyVoided: true,
+          invoiceId: cleanInvoiceId,
+          orderId: cleanOrderId,
+          status: 'VOIDED',
+        };
+      }
+
+      ctx.db.prepare('DELETE FROM billing_invoices WHERE invoice_id = ?').run(row.invoice_id);
+
+      ctx.bus.emit('invoice.voided', {
+        invoiceId: row.invoice_id,
+        orderId: row.order_id,
+        status: 'VOIDED',
+      });
+
+      return {
+        voided: true,
+        invoiceId: row.invoice_id,
+        orderId: row.order_id,
+        status: 'VOIDED',
+      };
+    },
   },
 
   routes: {},

@@ -17,11 +17,11 @@ function formatUsd(amount) {
 export function renderWidget(ctx) {
   const totals = ctx.db.prepare(`
     SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS revenue
-    FROM orders_records WHERE status != 'PENDING'
+    FROM orders_records WHERE status NOT IN ('PENDING', 'COMPENSATION_FAILED')
   `).get();
   const recent = ctx.db.prepare(`
     SELECT order_id, customer, sku, qty, total_amount, status, created_at
-    FROM orders_records WHERE status != 'PENDING' ORDER BY created_at DESC, rowid DESC LIMIT 8
+    FROM orders_records WHERE status NOT IN ('PENDING', 'COMPENSATION_FAILED') ORDER BY created_at DESC, rowid DESC LIMIT 8
   `).all();
   const cellStyle = 'padding:8px;text-align:left;border-bottom:1px solid #263459;overflow-wrap:anywhere;';
   const rows = recent.map((order) => `<tr>${[

@@ -132,6 +132,15 @@ export const STUB_SERVICE_MOCKS = {
     listInvoices(_ctx) {
       return [];
     },
+    voidInvoice(_ctx, { invoiceId = 'INV-MOCK-001', orderId = 'ORD-MOCK-001' } = {}) {
+      return {
+        voided: true,
+        invoiceId,
+        orderId,
+        status: 'VOIDED',
+        _mock: true,
+      };
+    },
   },
 
   orders: {

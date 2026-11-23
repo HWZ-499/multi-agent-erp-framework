@@ -332,3 +332,37 @@ test('renderWidget aggregates invoices, lists recent rows, and escapes HTML', as
   assert.deepEqual(billingSlot.metrics, widget.metrics);
   assert.match(billingSlot.html, /Built by OpenCode/);
 });
+
+test('voidInvoice deletes persisted invoice idempotently and emits invoice.voided', async (t) => {
+  const kernel = await bootKernel(t);
+
+  const invoice = await kernel.services.billing.createInvoice({
+    orderId: 'ORD-VOID-1',
+    customer: 'Void Co',
+    subtotal: 100,
+    taxRate: 0.08,
+  });
+  assert.equal((await kernel.services.billing.listInvoices()).length, 1);
+
+  const voided = await kernel.services.billing.voidInvoice({
+    invoiceId: invoice.invoiceId,
+    orderId: 'ORD-VOID-1',
+  });
+  assert.deepEqual(voided, {
+    voided: true,
+    invoiceId: invoice.invoiceId,
+    orderId: 'ORD-VOID-1',
+    status: 'VOIDED',
+  });
+  assert.equal((await kernel.services.billing.listInvoices()).length, 0);
+
+  const repeat = await kernel.services.billing.voidInvoice({
+    invoiceId: invoice.invoiceId,
+    orderId: 'ORD-VOID-1',
+  });
+  assert.equal(repeat.voided, false);
+  assert.equal(repeat.alreadyVoided, true);
+
+  const logs = await kernel.services.audit.listLogs();
+  assert.ok(logs.some((entry) => entry.eventName === 'invoice.voided'));
+});

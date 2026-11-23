@@ -279,12 +279,30 @@ test('releaseStock restores availableQty, decrements reservedQty, and emits inve
     assert.equal(releasedEvents.length, 1);
     assert.equal(releasedEvents[0].orderId, 'ORD-REL-1');
 
+    // Idempotent repeat release on the same orderId must not over-release stock
+    const repeat = await kernel.services.inventory.releaseStock({
+      sku: 'SKU-MONITOR',
+      qty: 4,
+      orderId: 'ORD-REL-1',
+    });
+    assert.equal(repeat.released, false);
+    assert.equal(repeat.alreadyReleased, true);
+
     await assert.rejects(
       () =>
         kernel.services.inventory.releaseStock({
           sku: 'SKU-MONITOR',
           qty: 1,
-          orderId: 'ORD-REL-1',
+          orderId: 'ORD-NEVER-RESERVED',
+        }),
+      /No reservation found/i
+    );
+
+    await assert.rejects(
+      () =>
+        kernel.services.inventory.releaseStock({
+          sku: 'SKU-MONITOR',
+          qty: 1,
         }),
       /Cannot release/i
     );
